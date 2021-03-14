@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "UnTouch": {
+      "commandName": "Project",
+      "commandLineArgs": "-t LastWrite 2/1/2020 C:\\Users\\User\\source\\repos\\UnTouch\\bin\\Release\\netcoreapp3.1\\win-x64\\publish\\UnTouch.pdb"
+    }
+  }
+}
