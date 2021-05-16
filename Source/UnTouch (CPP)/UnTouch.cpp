@@ -24,7 +24,7 @@ BOOL FileExists(wchar_t* file);
 BOOL GetFileDates(wchar_t* file, FILETIME* createTime, FILETIME* lastWriteTime, FILETIME* lastAccessTime);
 BOOL SetFileDates(wchar_t* file, FILETIME* createTime, FILETIME* lastWriteTime, FILETIME* lastAccessTime);
 BOOL SystemTimeFromStr(__in LPCWSTR psz, LCID lcid, __out LPSYSTEMTIME pst);
-int MonthDays(int month);
+int DaysInMonth(int year, int month);
 BOOL FileTimeFromStr(__in LPCWSTR psz, LCID lcid, __out LPFILETIME pft);
 #pragma endregion
 
@@ -52,7 +52,7 @@ int wmain(int argc, wchar_t* argv[])
 
 void Parse(int argc, wchar_t* argv[])
 {
-    if (argv == 0 || argc < 3) ErrorExit(0);
+    if (argv == 0 || argc < 3) ErrorExit("Missing arguments.");
     for (int i = 1; i < argc; i++)
     {
         wchar_t* arg = argv[i];
@@ -65,9 +65,10 @@ void Parse(int argc, wchar_t* argv[])
             {
                 i = ParseTimeFields(i + 1, argc, argv);
             }
+            continue;
         }
 
-        if (arg[0] >= '0' && arg[0] <= '9' && FileTimeFromStr(arg, 0x0409, &nuDateTime)) continue;
+        if (arg[0] >= '0' && arg[0] <= '9' && nuDateTime.dwHighDateTime == 0 && nuDateTime.dwLowDateTime == 0 && FileTimeFromStr(arg, 0x0409, &nuDateTime)) continue;
 
         if (FileExists(arg) && src == 0)
         {
@@ -84,16 +85,17 @@ void Parse(int argc, wchar_t* argv[])
 
     if (dst == 0) { dst = src; src = 0; }
 
-    if (src == 0 && nuDateTime.dwHighDateTime == 0 && nuDateTime.dwLowDateTime == 0) ErrorExit("If datetime is undefined the source file must not be undefined.");
+    if (src == 0 && nuDateTime.dwHighDateTime == 0 && nuDateTime.dwLowDateTime == 0) ErrorExit("Datetime is undefined or invalid.");
+    if (dst == 0) ErrorExit("File to update is undefined or does not exist.");
     if (src != 0 && dst != 0 && (nuDateTime.dwHighDateTime != 0 || nuDateTime.dwLowDateTime != 0)) ErrorExit("If source and destination files exist, specified datetime must be undefined");
 }
 
 int ParseTimeFields(int i, int argc, wchar_t* argv[])
 {
     int fd = 0;
-    std::wregex reCreateTime(L"^(C|Cr|Cre|Crea|Creat|Create|CreateT|CreateTi|CreateTim|CreateTime)$", std::regex_constants::icase);
-    std::wregex reLastWriteTime(L"^(LW|LastW|LastWr|LastWri|LastWrit|LastWrite|LastWriteT|LastWriteTi|LastWriteTim|LastWriteTime)$", std::regex_constants::icase);
-    std::wregex reLastAccessTime(L"^(LA|LastA|LastAc|LastAcc|LastAcce|LastAcces|LastAccess|LastAccessT|LastAccessTi|LastAccessTim|LastAccessTime)$", std::regex_constants::icase);
+    std::wregex reCreateTime(L"(C|Cr|Cre|Crea|Creat|Create|Created)", std::regex_constants::icase);
+    std::wregex reLastWriteTime(L"^(M|Mo|Mod|Modi|Modif|Modifi|Modifie|Modified)$", std::regex_constants::icase);
+    std::wregex reLastAccessTime(L"^(A|Ac|Acc|Acce|Acces|Access|Accesse|Accessed)$", std::regex_constants::icase);
     std::wstring input;
 
     for (; i < argc;)
@@ -137,21 +139,29 @@ void ErrorExit(const char* msg)
     }
 
     printf(
-        "Assign a new date to a file or directory.\r\n"
+        "\r\nAssign a new date to a file or directory.\r\n"
         "\t\n"
         "(1) Copy all filetimes from source file to destination file :\r\n"
         "    Usage: UnTouch.exe sourcefile destfile\r\n"
-        "           sourcefile = File to copy dates from.\r\n"
-        "           destfile = File to copy dates to.\r\n"
+        "           sourcefile - File to copy dates from.\r\n"
+        "           destfile - File to copy dates to.\r\n"
         "\r\n"
         "(2) Set specific time for specific date field :\r\n"
-        "    Usage: UnTouch.exe  [-t (time fields)] datetime destfile\r\n"
-        "           - t = one or more time fields to set. Choices are:\r\n"
-        "                 CreateTime, LastWriteTime, LastAccessTime or C, LW, LA (undefined == set all three fields)\r\n"
-        "           datetime = any datetime format (if ampm not specified, assumes 24-hr clock)\r\n"
-        "           destfile = File to update.\r\n"
+        "    Usage: UnTouch.exe [-t filedates] datetime destfile\r\n"
+        "           -t filedates - Specify which date fields to update. If undefined, sets all 3 fields to this new value.\r\n"
+        "              Filedate keywords - Created, Modified, Accessed or C, M, A.\r\n"
+        "           datetime - format: Year-part must be 4 digits.\r\n"
+        "              yyyy-mm-dd [hh:mm[:ss[.fff]] [am|pm]]\r\n"
+        "              yyyy-mm-dd[Thh:mm[:ss[.fff]][am|pm]] (formatted w/o spaces)\r\n"
+        "              mm/dd/yyyy ...\r\n"
+        "              If datetime contains spaces, it must be quoted.\r\n"
+        "              If ampm is not specified, assumes 24-hr clock.\r\n"
+        "              'am' and 'pm' may be abbreviated to 'a' and 'p'\r\n"
+        "           destfile = File to update. If file contains spaces, it must be quoted.\r\n"
         "\r\n"
-        "Everything is case insensitive.\r\n");
+        "    Arguments may be in any order.\r\n"
+        "    Everything is case insensitive.\r\n"
+    );
 
     exit(1);
 }
@@ -208,9 +218,10 @@ BOOL SystemTimeFromStr(__in LPCWSTR psz, LCID lcid, __out LPSYSTEMTIME pst)
     size_t retval;
     wcstombs_s(&retval, sz, 256, psz, wcslen(psz));
 
-    //Named capture groups not supported!!!
-    //std::regex reTime1("^(?<YEAR>[0-9]{2,4})[\\/-](?<MONTH>[0-9]{1,2})[\\/-](?<DAY>[0-9]{1,4})(?:[ T](?<HOUR>[0-9]{1,2}):(?<MINUTE>[0-9]{1,2})(?::(?<SECOND>[0-9]{1,2})(?:\\.(?<MS>[0-9]{1,3}))?)? ?(?<AMPM>am|pm|a|p)?)?", std::regex_constants::icase);
-    std::regex reTime1("^([0-9]{1,4})[\\/-]([0-9]{1,2})[\\/-]([0-9]{1,4})(?:[ T]([0-9]{1,2}):([0-9]{1,2})(?::([0-9]{1,2})(?:\\.([0-9]{1,3}))?)? ?(am|pm|a|p)?)?", std::regex_constants::icase);
+    //Date: We support both YMD and MDY format with delimiters: '-', '\', and '/'.
+    //Optional Time: We support a space or 'T' delimiter between date and time, with optional seconds, milliseconds, and a/p or am/pm with or without a space delimiter.
+    //Note: Named capture groups not supported!!!
+    std::regex reTime1("^([0-9]{1,4})[\\/-]([0-9]{1,2})[\\/-]([0-9]{1,4})(?:[ T]([0-9]{1,2}):([0-9]{1,2})(?::([0-9]{1,2})(?:\.([0-9]{1,3}))?)? ?(am|pm|a|p)?)?$", std::regex_constants::icase);
     std::string input = sz;
     std::smatch m;
 
@@ -231,26 +242,29 @@ BOOL SystemTimeFromStr(__in LPCWSTR psz, LCID lcid, __out LPSYSTEMTIME pst)
         pst->wYear = year;
     }
 
-    if (pst->wYear < 1000 || pst->wMonth < 1 || pst->wMonth >12 || pst->wDay < 1 || pst->wDay > MonthDays(pst->wMonth)) return FALSE;
+    if (pst->wYear < 1000 || pst->wMonth < 1 || pst->wMonth >12 || pst->wDay < 1 || pst->wDay > DaysInMonth(pst->wYear, pst->wMonth)) return FALSE;
 
     if (m[4].matched) pst->wHour = stoi(m[4].str());
     if (m[5].matched) pst->wMinute = stoi(m[5].str());
     if (m[6].matched) pst->wSecond = stoi(m[6].str());
 
-    if (pst->wHour > 23 || pst->wMinute > 60 || pst->wSecond > 60) return FALSE;
-
     if (m[7].matched)
     {
         string ms = m[7].str();
-        if (ms.size() < 3) ms.append("0");
-        if (ms.size() < 3) ms.append("0");
+        if (ms.length() < 3) ms += "0";
+        if (ms.length() < 3) ms += "0";
         pst->wMilliseconds = stoi(ms);
     }
     if (m[8].matched)
     {
         char ap = m[8].str()[0];
-        if (ap == 'p' || ap == 'P' && pst->wHour < 12) pst->wHour += 12;
+        if (ap == 'p' || ap == 'P' && pst->wHour < 12)
+        {
+            pst->wHour += 12;
+        }
     }
+
+    if (pst->wHour >= 24 || pst->wMinute >= 60 || pst->wSecond >= 60) return FALSE;
 
     //sscanf not as robust for parsing datetimes when parts are missing.
     //if (swscanf_s(psz, L"%hu-%hu-%hu %hu:%hu:%hu %[apAP]", &pst->wYear, &pst->wMonth, &pst->wDay, &pst->wHour, &pst->wMinute, &pst->wSecond, &ampm) < 3)
@@ -269,30 +283,27 @@ BOOL SystemTimeFromStr(__in LPCWSTR psz, LCID lcid, __out LPSYSTEMTIME pst)
     //    VariantTimeToSystemTime(date, pst);
 }
 
-int MonthDays(int month)
+int DaysInMonth(int year, int month)
 {
-    switch (month)
+    //leap year condition, if month is 2
+    if (month == 2)
     {
-    case 1: return 31;
-    case 2: return 28;
-    case 3: return 31;
-    case 4: return 30;
-    case 5: return 31;
-    case 6: return 30;
-    case 7: return 31;
-    case 8: return 31;
-    case 9: return 30;
-    case 10: return 31;
-    case 11: return 30;
-    case 12: return 31;
-    default: return 0;
+        if ((year % 400 == 0) || (year % 4 == 0 && year % 100 != 0))
+            return 29;
+        else
+            return 28;
     }
+    //months which has 31 days
+    else if (month == 1 || month == 3 || month == 5 || month == 7 || month == 8
+        || month == 10 || month == 12)
+        return 31;
+    else
+        return 30;
 }
 
 BOOL FileTimeFromStr(__in LPCWSTR psz, LCID lcid, __out LPFILETIME pft)
 {
     SYSTEMTIME st;
-
     memset(pft, 0, sizeof(FILETIME));
 
     return SystemTimeFromStr(psz, lcid, &st) &&
