@@ -21,6 +21,7 @@ void Parse(int argc, wchar_t* argv[]);
 int ParseTimeFields(int i, int argc, wchar_t* argv[]);
 void ErrorExit(const char* msg);
 BOOL FileExists(wchar_t* file);
+void DateTimeNow(__out LPFILETIME pft);
 BOOL GetFileDates(wchar_t* file, FILETIME* createTime, FILETIME* lastWriteTime, FILETIME* lastAccessTime);
 BOOL SetFileDates(wchar_t* file, FILETIME* createTime, FILETIME* lastWriteTime, FILETIME* lastAccessTime);
 BOOL SystemTimeFromStr(__in LPCWSTR psz, LCID lcid, __out LPSYSTEMTIME pst);
@@ -52,11 +53,11 @@ int wmain(int argc, wchar_t* argv[])
 
 void Parse(int argc, wchar_t* argv[])
 {
-    if (argv == 0 || argc < 3) ErrorExit("Missing arguments.");
+    if (argv == 0 || argc < 2) ErrorExit("Missing arguments.");
     for (int i = 1; i < argc; i++)
     {
         wchar_t* arg = argv[i];
-        if (argc == 0) ErrorExit("Arg must not be empty.");
+        if (argc == 0) ErrorExit("Arg must not be empty."); //may  be """ on the command-line
 
         if (arg[0] == '-' || arg[0] == '/')
         {
@@ -68,26 +69,36 @@ void Parse(int argc, wchar_t* argv[])
             continue;
         }
 
+        //must be a datetime if it starts with a number
         if (arg[0] >= '0' && arg[0] <= '9' && nuDateTime.dwHighDateTime == 0 && nuDateTime.dwLowDateTime == 0 && FileTimeFromStr(arg, 0x0409, &nuDateTime)) continue;
 
-        if (FileExists(arg) && src == 0)
+        if (src == NULL) //get first filename
         {
             src = arg;
+            if (!FileExists(src)) ErrorExit("File not found.");
             continue;
         }
 
-        if (FileExists(arg) && dst == 0)
+        if (dst == NULL) //get 2nd filename
         {
             dst = arg;
+            if (!FileExists(dst)) ErrorExit("File not found.");
             continue;
         }
     }
 
-    if (dst == 0) { dst = src; src = 0; }
+    if (dst == NULL) { dst = src; src = NULL; }
+    if (dst == NULL) ErrorExit("File to modify is not defined.");
+    if (src == NULL && nuDateTime.dwHighDateTime == 0 && nuDateTime.dwLowDateTime == 0)
+    {
+        printf("A specific datetime is not defined. Defaulting to today's date.");
+        DateTimeNow(&nuDateTime);
+    }
 
-    if (src == 0 && nuDateTime.dwHighDateTime == 0 && nuDateTime.dwLowDateTime == 0) ErrorExit("Datetime is undefined or invalid.");
-    if (dst == 0) ErrorExit("File to update is undefined or does not exist.");
-    if (src != 0 && dst != 0 && (nuDateTime.dwHighDateTime != 0 || nuDateTime.dwLowDateTime != 0)) ErrorExit("If source and destination files exist, specified datetime must be undefined");
+    if (src != NULL &&
+        dst != NULL &&
+        (nuDateTime.dwHighDateTime != 0 || nuDateTime.dwLowDateTime != 0))
+        ErrorExit("If source and destination files exist, specified datetime must be undefined");
 }
 
 int ParseTimeFields(int i, int argc, wchar_t* argv[])
@@ -148,15 +159,18 @@ void ErrorExit(const char* msg)
         "\r\n"
         "(2) Set specific time for specific date field :\r\n"
         "    Usage: UnTouch.exe [-t filedates] datetime destfile\r\n"
-        "           -t filedates - Specify which date fields to update. If undefined, sets all 3 fields to this new value.\r\n"
+        "           -t filedates - Specify which date fields to update.\r\n"
+        "              If undefined, sets all 3 fields to this new value.\r\n"
         "              Filedate keywords - Created, Modified, Accessed or C, M, A.\r\n"
+        "              Multiple keywords may be specified delimited by space.Do not quote.\r\n"
         "           datetime - format: Year-part must be 4 digits.\r\n"
-        "              yyyy-mm-dd [hh:mm[:ss[.fff]] [am|pm]]\r\n"
+        "              yyyy-mm-dd [hh:mm[:ss[.fff]] [am|pm]] (formatted with spaces)\r\n"
         "              yyyy-mm-dd[Thh:mm[:ss[.fff]][am|pm]] (formatted w/o spaces)\r\n"
         "              mm/dd/yyyy ...\r\n"
         "              If datetime contains spaces, it must be quoted.\r\n"
         "              If ampm is not specified, assumes 24-hr clock.\r\n"
         "              'am' and 'pm' may be abbreviated to 'a' and 'p'\r\n"
+        "              If datetime undefined, defaults to today's date.\r\n"
         "           destfile = File to update. If file contains spaces, it must be quoted.\r\n"
         "\r\n"
         "    Arguments may be in any order.\r\n"
@@ -177,6 +191,14 @@ BOOL FileExists(wchar_t* file)
         FindClose(handle);
     }
     return found;
+}
+
+void DateTimeNow(__out LPFILETIME pft)
+{
+    SYSTEMTIME st;
+    memset(&st, 0, sizeof(SYSTEMTIME));
+    GetSystemTime(&st);
+    SystemTimeToFileTime(&st, pft);
 }
 
 BOOL GetFileDates(wchar_t* file, FILETIME* createTime, FILETIME* lastWriteTime, FILETIME* lastAccessTime)
@@ -203,7 +225,7 @@ BOOL SetFileDates(wchar_t* file, FILETIME* createTime, FILETIME* lastWriteTime, 
     HANDLE hFile = CreateFile(file, FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
     if (hFile == INVALID_HANDLE_VALUE) return FALSE;
 
-    BOOL ok = SetFileTime(hFile, createTime, lastWriteTime, lastAccessTime);
+    BOOL ok = SetFileTime(hFile, createTime, lastAccessTime, lastWriteTime);
     CloseHandle(hFile);
     return ok;
 }
@@ -221,7 +243,7 @@ BOOL SystemTimeFromStr(__in LPCWSTR psz, LCID lcid, __out LPSYSTEMTIME pst)
     //Date: We support both YMD and MDY format with delimiters: '-', '\', and '/'.
     //Optional Time: We support a space or 'T' delimiter between date and time, with optional seconds, milliseconds, and a/p or am/pm with or without a space delimiter.
     //Note: Named capture groups not supported!!!
-    std::regex reTime1("^([0-9]{1,4})[\\/-]([0-9]{1,2})[\\/-]([0-9]{1,4})(?:[ T]([0-9]{1,2}):([0-9]{1,2})(?::([0-9]{1,2})(?:\.([0-9]{1,3}))?)? ?(am|pm|a|p)?)?$", std::regex_constants::icase);
+    std::regex reTime1("^([0-9]{1,4})[\\/-]([0-9]{1,2})[\\/-]([0-9]{1,4})(?:[ T]([0-9]{1,2}):([0-9]{1,2})(?::([0-9]{1,2})(?:\\.([0-9]{1,3}))?)? ?(am|pm|a|p)?)?$", std::regex_constants::icase);
     std::string input = sz;
     std::smatch m;
 
