@@ -186,7 +186,7 @@ Assign a new date to a file or directory.
             if (!match.Success)
             {
                 //if match fails, we try official .NET datetime parser.
-                if (!DateTime.TryParse(s, out result)) return false;
+                return DateTime.TryParse(s, out result);
             }
 
             result = DateTime.MinValue;
